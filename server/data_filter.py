@@ -95,6 +95,10 @@ def operations_callback(ops: defaultdict) -> None:
         for acronym, full_name in synonym_map.items():
             text_lower = re.sub(r'\b' + re.escape(acronym) + r'\b', full_name, text_lower)
 
+        # Exclude posts containing donald or trump
+        if 'donald' in text_lower or 'trump' in text_lower:
+            continue
+
         # High-confidence matches - unambiguous band names
         clear_bands = [
             'nirvana', 'pearl jam', 'soundgarden', 'alice in chains',
