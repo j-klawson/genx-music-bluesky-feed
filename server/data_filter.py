@@ -70,8 +70,42 @@ def operations_callback(ops: defaultdict) -> None:
         if should_ignore_post(created_post):
             continue
 
-        # only python-related posts
-        if 'python' in record.text.lower():
+        # Gen X music filter - bands, genres, and culture
+        text_lower = record.text.lower()
+
+        # Define Gen X music keywords
+        genx_bands = [
+            'nirvana', 'pearl jam', 'soundgarden', 'alice in chains',
+            'stone temple pilots', 'radiohead', 'smashing pumpkins',
+            'foo fighters', 'r.e.m.', 'rem', 'pixies', 'sonic youth',
+            'pavement', 'dinosaur jr', 'rage against the machine',
+            'nine inch nails', 'nin', 'green day', 'the offspring',
+            'blink-182', 'weezer', 'beck', 'blur', 'oasis', 'pulp',
+            'suede', 'my bloody valentine', 'ride', 'slowdive',
+            'the breeders', 'hole', 'garbage', 'no doubt', 'portishead',
+            'massive attack', 'tricky', 'pj harvey', 'bjork'
+        ]
+
+        genx_genres = [
+            'grunge', 'alternative rock', 'alternative', 'punk rock',
+            'indie rock', 'britpop', 'post-punk', 'shoegaze', 'trip-hop',
+            'college rock', 'lo-fi'
+        ]
+
+        genx_culture = [
+            'gen x music', 'generation x music', '90s music', '90s rock',
+            '90s alternative', '90s grunge', '90s indie', '90s punk',
+            'nineties music', 'nineties rock'
+        ]
+
+        # Check if post matches any Gen X music keywords
+        is_genx_music = (
+            any(band in text_lower for band in genx_bands) or
+            any(genre in text_lower for genre in genx_genres) or
+            any(term in text_lower for term in genx_culture)
+        )
+
+        if is_genx_music:
             reply_root = reply_parent = None
             if record.reply:
                 reply_root = record.reply.root.uri
