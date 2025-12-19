@@ -155,34 +155,51 @@ flask --debug run
 
 Edit `server/data_filter.py` to implement your custom feed logic.
 
-**Example: Gen X Music Feed**
+**Example: Gen X Music Feed with Context-Aware Filtering**
+
+The Gen X Music feed uses word boundary matching and context awareness to reduce false positives:
+
 ```python
-# Gen X music filter - bands, genres, and culture
-text_lower = record.text.lower()
+import re
 
-genx_bands = [
-    'nirvana', 'pearl jam', 'soundgarden', 'alice in chains',
-    'radiohead', 'smashing pumpkins', 'foo fighters', 'pixies',
-    'rage against the machine', 'nine inch nails', 'weezer'
-]
+def has_word_match(text: str, words: list[str]) -> bool:
+    """Check if any word appears as a whole word in text."""
+    if not words:
+        return False
+    pattern = r'\b(' + '|'.join(re.escape(word) for word in words) + r')\b'
+    return bool(re.search(pattern, text, re.IGNORECASE))
 
-genx_genres = [
-    'grunge', 'alternative rock', 'punk rock', 'britpop', 'shoegaze'
-]
+# High-confidence matches - unambiguous band names
+clear_bands = ['nirvana', 'pearl jam', 'soundgarden', 'radiohead']
+clear_genres = ['grunge', 'shoegaze', 'britpop']
 
-genx_culture = [
-    'gen x music', '90s music', '90s rock', 'nineties music'
-]
+# Ambiguous terms that need music context
+ambiguous_bands = ['blur', 'hole', 'garbage', 'ride']
+ambiguous_genres = ['alternative', 'indie', 'punk']
+
+# Music context words
+music_context = ['music', 'band', 'album', 'song', 'concert', 'spotify']
+
+# Filter logic: clear matches OR (ambiguous matches WITH context)
+has_clear_band = has_word_match(text_lower, clear_bands)
+has_clear_genre = has_word_match(text_lower, clear_genres)
+has_music_context = has_word_match(text_lower, music_context)
+has_ambiguous = has_word_match(text_lower, ambiguous_bands + ambiguous_genres)
 
 is_genx_music = (
-    any(band in text_lower for band in genx_bands) or
-    any(genre in text_lower for genre in genx_genres) or
-    any(term in text_lower for term in genx_culture)
+    has_clear_band or
+    has_clear_genre or
+    (has_ambiguous and has_music_context)
 )
 
 if is_genx_music:
     posts_to_create.append(post_dict)
 ```
+
+**Key improvements:**
+- **Word boundaries**: Prevents "blur" from matching "blurry photo"
+- **Context awareness**: Generic terms like "alternative" only match when music context words are present
+- **Clear vs ambiguous**: Separates unambiguous indicators from common words that need validation
 
 ### Publish Your Feed
 
@@ -691,7 +708,7 @@ docker system prune -a
 Post.delete().where(Post.uri.in_(post_uris_to_delete)).execute()
 ```
 
-### 2. Filter Accuracy Problem
+### 2. Filter Accuracy Problem (FIXED)
 
 **Issue:** Generic keywords can match posts that aren't about your intended topic.
 
@@ -699,19 +716,26 @@ Post.delete().where(Post.uri.in_(post_uris_to_delete)).execute()
 
 **Impact:** Feed captures false positives - posts that match keywords but aren't relevant.
 
-**Solution:** Refine filter to require context words:
+**Solution (Implemented):** The current filter uses word boundary matching and context awareness:
 ```python
-# Require music-related context words for generic terms
-music_context = ['music', 'band', 'album', 'song', 'tour', 'concert']
-has_music_context = any(word in text_lower for word in music_context)
+import re
 
-# Use word boundaries to avoid substring matches
-is_band_name = any(f' {band} ' in f' {text_lower} ' for band in bands)
+def has_word_match(text: str, words: list[str]) -> bool:
+    """Check if any word appears as a whole word in text."""
+    pattern = r'\b(' + '|'.join(re.escape(word) for word in words) + r')\b'
+    return bool(re.search(pattern, text, re.IGNORECASE))
 
-# Generic genres need music context
-is_genre_with_context = (
-    any(genre in text_lower for genre in genres) and has_music_context
-)
+# Separate clear indicators from ambiguous terms
+clear_bands = ['nirvana', 'pearl jam', 'radiohead']
+ambiguous_bands = ['blur', 'hole', 'garbage']
+music_context = ['music', 'band', 'album', 'song']
+
+# Require context for ambiguous matches
+has_clear = has_word_match(text, clear_bands)
+has_ambiguous = has_word_match(text, ambiguous_bands)
+has_context = has_word_match(text, music_context)
+
+is_match = has_clear or (has_ambiguous and has_context)
 ```
 
 **Testing:** Always test your filter locally with `flask --debug run` and monitor the captured posts before deploying to production.
