@@ -1,0 +1,51 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+.venv
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# CI/CD
+.github
+
+# Documentation
+README.md
+CLAUDE.md
+*.md
+!SERVER-SETUP.md
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+.DS_Store
+
+# Testing
+.pytest_cache
+.coverage
+htmlcov/
+.tox/
