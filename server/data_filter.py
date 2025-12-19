@@ -82,22 +82,41 @@ def operations_callback(ops: defaultdict) -> None:
         # Gen X music filter with word boundary matching and context awareness
         text_lower = record.text.lower()
 
+        # Expand acronyms/synonyms to full band names
+        synonym_map = {
+            'nin': 'nine inch nails',
+            'stp': 'stone temple pilots',
+            'rhcp': 'red hot chili peppers',
+            'ratm': 'rage against the machine',
+            'aic': 'alice in chains'
+        }
+
+        # Replace synonyms with their full names (using word boundaries)
+        for acronym, full_name in synonym_map.items():
+            text_lower = re.sub(r'\b' + re.escape(acronym) + r'\b', full_name, text_lower)
+
         # High-confidence matches - unambiguous band names
         clear_bands = [
             'nirvana', 'pearl jam', 'soundgarden', 'alice in chains',
             'stone temple pilots', 'radiohead', 'smashing pumpkins',
             'foo fighters', 'r.e.m.', 'rem', 'pixies', 'sonic youth',
             'pavement', 'dinosaur jr', 'rage against the machine',
-            'nine inch nails', 'nin', 'green day', 'the offspring',
+            'nine inch nails', 'green day', 'the offspring',
             'blink-182', 'my bloody valentine', 'slowdive',
-            'the breeders', 'no doubt', 'pj harvey', 'bjork',
-            'butthole surfers', 'portishead', 'massive attack'
+            'the breeders', 'pj harvey', 'bjork',
+            'butthole surfers', 'portishead', 'massive attack',
+            'red hot chili peppers', 'guided by voices', 'sleater-kinney',
+            'toad the wet sprocket', 'neutral milk hotel',
+            'presidents of the united states of america',
+            'the jesus and mary chain', 'marcy playground', 'cocteau twins',
+            'the dandy warhols', 'mercury rev', 'archers of loaf',
+            'the brian jonestown massacre', 'soul coughing', 'primitive radio gods'
         ]
 
         # Ambiguous terms that need music context (common English words)
         ambiguous_bands = [
             'blur', 'hole', 'garbage', 'ride', 'pulp', 'suede',
-            'beck', 'weezer', 'oasis', 'tricky'
+            'beck', 'weezer', 'oasis', 'tricky', 'no doubt'
         ]
 
         # Clear genre indicators
