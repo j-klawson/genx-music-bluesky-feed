@@ -18,7 +18,7 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            cd /path/to/bsky-feedgen
+            cd /home/feedgen/bluesky-feed-generator
             git pull origin main
             docker-compose down
             docker-compose up -d --build
