@@ -83,7 +83,7 @@ def operations_callback(ops: defaultdict) -> None:
             'blink-182', 'weezer', 'beck', 'blur', 'oasis', 'pulp',
             'suede', 'my bloody valentine', 'ride', 'slowdive',
             'the breeders', 'hole', 'garbage', 'no doubt', 'portishead',
-            'massive attack', 'tricky', 'pj harvey', 'bjork'
+            'massive attack', 'tricky', 'pj harvey', 'bjork', 'butthole surfers'
         ]
 
         genx_genres = [

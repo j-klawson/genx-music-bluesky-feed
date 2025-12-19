@@ -1,13 +1,13 @@
-# Bluesky Feed Generator - Deployment Guide
+# Bluesky Feed Generator - Docker Deployment Guide
 
-This guide documents the complete workflow for developing and deploying your custom Bluesky feed generator to a Debian Linux server using GitHub Actions CI/CD.
+This guide documents the complete workflow for developing and deploying your custom Bluesky feed generator to a Debian Linux server using Docker and GitHub Actions CI/CD.
 
 ## Table of Contents
 
 - [Overview](#overview)
 - [Initial Setup](#initial-setup)
 - [Local Development](#local-development)
-- [Server Setup](#server-setup)
+- [Docker Deployment](#docker-deployment)
 - [CI/CD Pipeline](#cicd-pipeline)
 - [Security Best Practices](#security-best-practices)
 - [Development Workflow](#development-workflow)
@@ -19,19 +19,36 @@ This guide documents the complete workflow for developing and deploying your cus
 ## Overview
 
 This deployment workflow uses:
+- **Docker** for containerization
+- **Docker Compose** for orchestration
 - **GitHub** for version control and CI/CD (GitHub Actions)
 - **Debian Linux** server for hosting
 - **Nginx** as reverse proxy
 - **Let's Encrypt** for SSL certificates
-- **Systemd** for process management
 - **Waitress** as production WSGI server
 
 ### Architecture
 
 ```
-GitHub Push → GitHub Actions → SSH to Server → Deploy → Systemd Restart
-Internet → Nginx (HTTPS) → Waitress (Python App) → SQLite DB
+GitHub Push → GitHub Actions → SSH to Server → Docker Rebuild → Container Restart
+Internet → Nginx (HTTPS) → Docker Container (Waitress) → SQLite DB
 ```
+
+### Why Docker?
+
+- **Isolation**: App runs in its own container, no system Python conflicts
+- **Consistency**: Same environment locally and in production
+- **Easy rollback**: Simple to restart or roll back to previous versions
+- **Auto-restart**: Container restarts automatically if it crashes
+- **Clean deployment**: No need for virtual environments or system packages
+- **Easy updates**: Rebuild and restart with one command
+
+### Example Feed
+
+This guide uses the **Gen X Music** feed as a working example:
+- **Feed URL**: https://bsky-feeds.9600baud.net
+- **Bluesky Feed**: https://bsky.app/profile/did:plc:ua3bkfmmdsfeljfevkma3btq/feed/genx-music
+- **Filter**: Posts about Generation X era music (grunge, alternative rock, punk, 90s bands)
 
 ---
 
@@ -101,10 +118,29 @@ HOSTNAME=your-domain.com
 SERVICE_DID=did:web:your-domain.com
 FEED_URI=  # Leave empty until first publish
 
+# Bluesky credentials for publishing (create app password first!)
+HANDLE=your-handle.bsky.social  # WITHOUT the @ symbol
+PASSWORD=xxxx-xxxx-xxxx-xxxx     # App password from Bluesky settings
+
+# Feed metadata
+RECORD_NAME=my-feed
+DISPLAY_NAME=My Custom Feed
+DESCRIPTION=Description of what your feed filters for
+
 # Optional settings
 IGNORE_ARCHIVED_POSTS=true
 IGNORE_REPLY_POSTS=false
 ```
+
+### Create Bluesky App Password
+
+Before publishing your feed:
+1. Open Bluesky app or web
+2. Go to Settings → Privacy and Security → App Passwords
+3. Click "Add App Password"
+4. Name it "Feed Generator"
+5. Copy the generated password (you can't view it again!)
+6. Add it to your `.env` file
 
 ### Run Development Server
 
@@ -117,27 +153,36 @@ flask --debug run
 
 ### Customize Your Feed
 
-Edit these files to implement your custom feed logic:
+Edit `server/data_filter.py` to implement your custom feed logic.
 
-1. **`server/data_filter.py`** - Filter posts from the firehose
-   ```python
-   # Example: Filter for posts containing specific keywords
-   if 'python' in record.text.lower():
-       posts_to_create.append(post_dict)
-   ```
+**Example: Gen X Music Feed**
+```python
+# Gen X music filter - bands, genres, and culture
+text_lower = record.text.lower()
 
-2. **`server/algos/feed.py`** - Feed generation logic
-   ```python
-   # Customize how posts are ordered and returned
-   posts = Post.select().order_by(Post.indexed_at.desc()).limit(limit)
-   ```
+genx_bands = [
+    'nirvana', 'pearl jam', 'soundgarden', 'alice in chains',
+    'radiohead', 'smashing pumpkins', 'foo fighters', 'pixies',
+    'rage against the machine', 'nine inch nails', 'weezer'
+]
 
-3. **`server/database.py`** - Add custom fields if needed
-   ```python
-   class Post(BaseModel):
-       uri = peewee.CharField(index=True)
-       # Add your custom fields here
-   ```
+genx_genres = [
+    'grunge', 'alternative rock', 'punk rock', 'britpop', 'shoegaze'
+]
+
+genx_culture = [
+    'gen x music', '90s music', '90s rock', 'nineties music'
+]
+
+is_genx_music = (
+    any(band in text_lower for band in genx_bands) or
+    any(genre in text_lower for genre in genx_genres) or
+    any(term in text_lower for term in genx_culture)
+)
+
+if is_genx_music:
+    posts_to_create.append(post_dict)
+```
 
 ### Publish Your Feed
 
@@ -152,115 +197,105 @@ This will:
 - Give you a FEED_URI to add to `.env`
 - Make your feed discoverable in the app
 
+**Important:** After getting the FEED_URI, add it to `.env` and restart your development server.
+
 ---
 
-## Server Setup
+## Docker Deployment
 
-### 1. Prepare Debian Server
+For comprehensive Docker deployment instructions, see **[SERVER-SETUP.md](SERVER-SETUP.md)**.
 
-```bash
-# Update system
-sudo apt update && sudo apt upgrade -y
+### Quick Start
 
-# Install required packages
-sudo apt install -y python3 python3-pip python3-venv nginx certbot python3-certbot-nginx git
+#### 1. Create Docker Configuration Files
 
-# Create deployment user
-sudo useradd -m -s /bin/bash feedgen
-sudo usermod -aG sudo feedgen  # Optional: only if needed
-
-# Switch to feedgen user
-sudo su - feedgen
+**Dockerfile:**
+```dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir waitress
+COPY . .
+EXPOSE 8080
+CMD ["waitress-serve", "--listen=0.0.0.0:8080", "server.app:app"]
 ```
 
-### 2. Clone Repository on Server
+**docker-compose.yml:**
+```yaml
+services:
+  feedgen:
+    build: .
+    container_name: bsky-feedgen
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./feed_database.db:/app/feed_database.db
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - feedgen-network
 
-```bash
-# As feedgen user
-cd ~
-git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git app
-cd app
-
-# Create virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Install production server
-pip install waitress
+networks:
+  feedgen-network:
+    driver: bridge
 ```
 
-### 3. Configure Environment on Server
+**.dockerignore:**
+```
+.env
+*.db
+.git
+.venv
+__pycache__
+*.pyc
+```
+
+#### 2. Server Prerequisites
+
+On your Debian server:
+```bash
+# Install Docker if not already installed
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+
+# Install Docker Compose
+sudo apt update
+sudo apt install docker-compose-plugin
+
+# Add user to docker group (optional)
+sudo usermod -aG docker $USER
+```
+
+#### 3. Deploy to Server
 
 ```bash
-# Create .env file (DO NOT commit this to git!)
+# Clone repository
+git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git
+cd YOUR_REPO
+
+# Create .env file (DO NOT commit to git!)
 nano .env
+# Add your production configuration
+
+# Create empty database file
+touch feed_database.db
+chmod 666 feed_database.db
+
+# Build and start container
+docker-compose up -d --build
+
+# View logs
+docker-compose logs -f
 ```
 
-Add your production configuration:
-```bash
-HOSTNAME=your-feed-domain.com
-SERVICE_DID=did:web:your-feed-domain.com
-FEED_URI=at://did:plc:YOUR_DID/app.bsky.feed.generator/YOUR_FEED
-IGNORE_ARCHIVED_POSTS=true
-IGNORE_REPLY_POSTS=false
-```
+#### 4. Configure Nginx
 
-### 4. Create Systemd Service
-
-Exit to root user and create service file:
-
-```bash
-sudo nano /etc/systemd/system/bsky-feedgen.service
-```
-
-Add this configuration:
-
-```ini
-[Unit]
-Description=Bluesky Feed Generator
-After=network.target
-
-[Service]
-Type=simple
-User=feedgen
-WorkingDirectory=/home/feedgen/app
-Environment="PATH=/home/feedgen/app/.venv/bin"
-ExecStart=/home/feedgen/app/.venv/bin/waitress-serve --listen=127.0.0.1:8080 server.app:app
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable and start the service:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable bsky-feedgen
-sudo systemctl start bsky-feedgen
-sudo systemctl status bsky-feedgen
-```
-
-### 5. Configure Nginx
-
-Create nginx site configuration:
-
-```bash
-sudo nano /etc/nginx/sites-available/feedgen
-```
-
-Add this configuration:
-
+Create `/etc/nginx/sites-available/feedgen`:
 ```nginx
 server {
     listen 80;
-    server_name your-feed-domain.com;
+    server_name your-domain.com;
 
     location / {
         proxy_pass http://127.0.0.1:8080;
@@ -272,26 +307,19 @@ server {
 }
 ```
 
-Enable the site:
-
+Enable and restart:
 ```bash
 sudo ln -s /etc/nginx/sites-available/feedgen /etc/nginx/sites-enabled/
-sudo nginx -t  # Test configuration
+sudo nginx -t
 sudo systemctl restart nginx
 ```
 
-### 6. Setup SSL Certificate
+#### 5. Setup SSL Certificate
 
 ```bash
-sudo certbot --nginx -d your-feed-domain.com
-
-# Follow prompts to configure HTTPS
-# Certbot will automatically modify your nginx config
-```
-
-Test auto-renewal:
-```bash
-sudo certbot renew --dry-run
+sudo apt install certbot python3-certbot-nginx
+sudo certbot --nginx -d your-domain.com
+sudo certbot renew --dry-run  # Test auto-renewal
 ```
 
 ---
@@ -307,10 +335,10 @@ On your local machine:
 ssh-keygen -t ed25519 -C "github-actions-deploy" -f ~/.ssh/github_deploy
 
 # Copy public key to server
-ssh-copy-id -i ~/.ssh/github_deploy.pub feedgen@your-server-ip
+ssh-copy-id -i ~/.ssh/github_deploy.pub user@your-server-ip
 
 # Test connection
-ssh -i ~/.ssh/github_deploy feedgen@your-server-ip
+ssh -i ~/.ssh/github_deploy user@your-server-ip
 ```
 
 ### 2. Configure GitHub Secrets
@@ -319,7 +347,7 @@ Go to your GitHub repository → Settings → Secrets and variables → Actions
 
 Add these secrets:
 - **`SERVER_HOST`**: Your server IP address or domain
-- **`SERVER_USER`**: `feedgen`
+- **`SERVER_USER`**: Your deployment username
 - **`SSH_PRIVATE_KEY`**: Contents of `~/.ssh/github_deploy` (the private key)
 
 To get the private key:
@@ -328,73 +356,59 @@ cat ~/.ssh/github_deploy
 # Copy entire output including BEGIN and END lines
 ```
 
-### 3. Allow Service Restart Without Password
-
-On the server, allow feedgen user to restart the service:
-
-```bash
-sudo visudo -f /etc/sudoers.d/feedgen
-```
-
-Add this line:
-```
-feedgen ALL=(ALL) NOPASSWD: /bin/systemctl restart bsky-feedgen
-```
-
-Save and exit.
-
-### 4. Create GitHub Actions Workflow
+### 3. Create GitHub Actions Workflow
 
 Create `.github/workflows/deploy.yml`:
 
 ```yaml
-name: Deploy to Debian Server
+name: Deploy to Production
 
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: production  # Requires manual approval
 
     steps:
-      - name: Deploy to production server
+      - name: Deploy via SSH
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            cd /home/feedgen/app
-
-            # Pull latest code
+            cd /home/feedgen/bluesky-feed-generator
             git pull origin main
-
-            # Activate virtual environment and update dependencies
-            source .venv/bin/activate
-            pip install -r requirements.txt
-
-            # Restart service
-            sudo systemctl restart bsky-feedgen
-
-            # Check status
-            sleep 3
-            sudo systemctl status bsky-feedgen --no-pager
+            docker-compose down
+            docker-compose up -d --build
+            docker-compose logs --tail=50
 ```
 
-Commit and push:
+### 4. Configure Environment Protection
 
-```bash
-git add .github/workflows/deploy.yml
-git commit -m "Add CI/CD deployment workflow"
-git push
-```
+**Important:** Protect your production environment from unauthorized deployments:
 
-### 5. Test Deployment
+1. Go to: **GitHub Repository → Settings → Environments → New environment**
+2. Name it `production`
+3. Add protection rules:
+   - Check "Required reviewers"
+   - Add yourself as a reviewer
+4. Save protection rules
 
-Push any change to the main branch and watch the Actions tab in GitHub to see the deployment run.
+This ensures you must manually approve each deployment, even on public repos.
+
+### 5. Configure Branch Protection (Optional)
+
+Go to: **GitHub Repository → Settings → Branches → Add rule**
+
+For branch `main`:
+- Require pull request reviews before merging
+- Require status checks to pass
+- Restrict who can push to branch
 
 ---
 
@@ -456,6 +470,15 @@ __pycache__/
 - Use GitHub Secrets for deployment credentials
 - Rotate SSH keys periodically
 
+### Protecting Public Repositories
+
+Multi-layered protection:
+1. **GitHub Actions triggers only on push to main** - PRs don't trigger deployments
+2. **Environment protection with manual approval** - Even main branch pushes require your approval
+3. **Branch protection rules** - Prevent unauthorized merges to main
+4. **SSH key isolation** - Deployment key stored only in GitHub Secrets
+5. **You control merges** - Review all PRs before merging
+
 ---
 
 ## Development Workflow
@@ -464,7 +487,7 @@ __pycache__/
 
 ```bash
 # 1. Create feature branch
-git checkout -b feature/my-new-filter
+git checkout -b feature/improve-filter
 
 # 2. Make changes to feed logic
 nano server/data_filter.py
@@ -475,15 +498,16 @@ flask --debug run
 
 # 4. Commit changes
 git add .
-git commit -m "Add: Filter for posts about technology"
+git commit -m "Improve: Refine music filter keywords"
 
 # 5. Push to GitHub
-git push origin feature/my-new-filter
+git push origin feature/improve-filter
 
 # 6. Create Pull Request on GitHub
 # Review changes, then merge to main
 
-# 7. Automatic deployment triggers via GitHub Actions
+# 7. Approve deployment in GitHub Actions
+# GitHub Actions will automatically deploy via Docker rebuild
 ```
 
 ### Updating Feed Metadata
@@ -502,11 +526,14 @@ python publish_feed.py
 
 ```bash
 # On server: backup database
-cp /home/feedgen/app/feed_database.db /home/feedgen/backups/feed_$(date +%Y%m%d).db
+cp feed_database.db feed_database.db.backup-$(date +%Y%m%d)
 
 # Reset database (WARNING: deletes all data)
+docker-compose down
 rm feed_database.db
-python -c "from server.database import db; db.create_tables()"
+touch feed_database.db
+chmod 666 feed_database.db
+docker-compose up -d
 ```
 
 ---
@@ -517,29 +544,38 @@ python -c "from server.database import db; db.create_tables()"
 
 ```bash
 # Real-time logs
-sudo journalctl -u bsky-feedgen -f
+docker-compose logs -f
 
 # Recent logs
-sudo journalctl -u bsky-feedgen -n 100
+docker-compose logs --tail=100
 
-# Logs from specific time
-sudo journalctl -u bsky-feedgen --since "1 hour ago"
+# Logs from specific service
+docker-compose logs -f feedgen
+
+# Logs since specific time
+docker-compose logs --since 1h
 ```
 
-### Check Service Status
+### Check Container Status
 
 ```bash
-# Service status
-sudo systemctl status bsky-feedgen
+# Container status
+docker ps
 
-# Restart service
-sudo systemctl restart bsky-feedgen
+# Container details
+docker-compose ps
 
-# Stop service
-sudo systemctl stop bsky-feedgen
+# Resource usage
+docker stats bsky-feedgen
 
-# Start service
-sudo systemctl start bsky-feedgen
+# Restart container
+docker-compose restart
+
+# Stop and remove container
+docker-compose down
+
+# Rebuild and restart
+docker-compose up -d --build
 ```
 
 ### Test Endpoints
@@ -557,25 +593,47 @@ curl "https://your-domain.com/xrpc/app.bsky.feed.getFeedSkeleton?feed=YOUR_FEED_
 
 ### Common Issues
 
-**Service won't start:**
+**Container won't start:**
 ```bash
 # Check logs for errors
-sudo journalctl -u bsky-feedgen -n 50
+docker-compose logs --tail=50
 
 # Check if port is already in use
 sudo netstat -tlnp | grep 8080
 
-# Verify virtual environment
-/home/feedgen/app/.venv/bin/python --version
+# Rebuild container from scratch
+docker-compose down
+docker-compose build --no-cache
+docker-compose up -d
 ```
 
-**Database locked errors:**
+**Database permission errors:**
 ```bash
-# Check if multiple instances are running
-ps aux | grep python
+# Create database file before starting container
+touch feed_database.db
+chmod 666 feed_database.db
+docker-compose up -d
+```
 
-# Kill stale processes
-sudo systemctl restart bsky-feedgen
+**Environment variables not loading:**
+```bash
+# Verify .env file exists in same directory as docker-compose.yml
+ls -la .env
+
+# Check variables are loaded in container
+docker exec bsky-feedgen env | grep HOSTNAME
+```
+
+**Feed showing old/wrong posts:**
+```bash
+# Server may be running old container image
+# Pull latest code and rebuild
+git pull origin main
+docker-compose down
+docker-compose up -d --build
+
+# Check if new code is deployed
+docker exec bsky-feedgen cat server/data_filter.py | grep "your-keyword"
 ```
 
 **Firehose connection issues:**
@@ -583,8 +641,11 @@ sudo systemctl restart bsky-feedgen
 # Check network connectivity
 ping bsky.network
 
-# Check firewall isn't blocking outbound connections
-sudo ufw status
+# Check container logs for connection errors
+docker-compose logs | grep -i error
+
+# Restart container
+docker-compose restart
 ```
 
 **SSL certificate issues:**
@@ -594,19 +655,25 @@ sudo certbot renew
 
 # Check certificate expiry
 sudo certbot certificates
+
+# Force renewal
+sudo certbot renew --force-renewal
 ```
 
 ### Performance Monitoring
 
 ```bash
 # Check resource usage
-htop
+docker stats
 
 # Monitor database size
-du -h /home/feedgen/app/feed_database.db
+du -h feed_database.db
 
 # Check disk space
 df -h
+
+# Clean up unused Docker resources
+docker system prune -a
 ```
 
 ---
@@ -624,7 +691,32 @@ df -h
 Post.delete().where(Post.uri.in_(post_uris_to_delete)).execute()
 ```
 
-### 2. Deprecated datetime.utcnow
+### 2. Filter Accuracy Problem
+
+**Issue:** Generic keywords can match posts that aren't about your intended topic.
+
+**Example:** For the Gen X Music feed, words like "alternative", "punk", "indie", "blur", "hole", "garbage" are common English words that appear in non-music contexts.
+
+**Impact:** Feed captures false positives - posts that match keywords but aren't relevant.
+
+**Solution:** Refine filter to require context words:
+```python
+# Require music-related context words for generic terms
+music_context = ['music', 'band', 'album', 'song', 'tour', 'concert']
+has_music_context = any(word in text_lower for word in music_context)
+
+# Use word boundaries to avoid substring matches
+is_band_name = any(f' {band} ' in f' {text_lower} ' for band in bands)
+
+# Generic genres need music context
+is_genre_with_context = (
+    any(genre in text_lower for genre in genres) and has_music_context
+)
+```
+
+**Testing:** Always test your filter locally with `flask --debug run` and monitor the captured posts before deploying to production.
+
+### 3. Deprecated datetime.utcnow
 
 **Issue:** `database.py:18` uses deprecated `datetime.utcnow`
 
@@ -636,10 +728,11 @@ Post.delete().where(Post.uri.in_(post_uris_to_delete)).execute()
 indexed_at = peewee.DateTimeField(default=datetime.utcnow)
 
 # With
+from datetime import datetime, timezone
 indexed_at = peewee.DateTimeField(default=lambda: datetime.now(timezone.utc))
 ```
 
-### 3. Thread Safety
+### 4. Thread Safety
 
 **Issue:** Database operations happen in firehose callback thread
 
@@ -651,10 +744,13 @@ indexed_at = peewee.DateTimeField(default=lambda: datetime.now(timezone.utc))
 
 ## Additional Resources
 
+- [SERVER-SETUP.md](SERVER-SETUP.md) - Comprehensive Docker deployment guide
 - [AT Protocol Documentation](https://atproto.com/)
 - [Bluesky API Docs](https://docs.bsky.app/)
 - [Python atproto SDK](https://github.com/MarshalX/atproto)
 - [Feed Generator Overview](https://github.com/bluesky-social/feed-generator#overview)
+- [Docker Documentation](https://docs.docker.com/)
+- [Docker Compose Documentation](https://docs.docker.com/compose/)
 
 ---
 
@@ -667,5 +763,4 @@ indexed_at = peewee.DateTimeField(default=lambda: datetime.now(timezone.utc))
 ---
 
 **Last Updated:** 2025-12-19
-**Maintainer:** Your Name
 **License:** MIT
