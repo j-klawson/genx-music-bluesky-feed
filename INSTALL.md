@@ -1,4 +1,4 @@
-# Server Setup Guide - Docker Deployment
+# Installation Guide - Docker Deployment
 
 This guide covers deploying the Bluesky Feed Generator to a Debian Linux server using Docker.
 
@@ -550,4 +550,4 @@ For issues:
 
 ---
 
-**Last Updated**: 2025-12-19
+**Last Updated**: 2025-12-20

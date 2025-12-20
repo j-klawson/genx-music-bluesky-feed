@@ -1,244 +1,118 @@
-# Bluesky Feed Generator - Docker Deployment Guide
+# Bluesky Feed Generator - Deployment Guide
 
-This guide documents the complete workflow for developing and deploying your custom Bluesky feed generator to a Debian Linux server using Docker and GitHub Actions CI/CD.
+Production deployment guide for custom Bluesky feeds using Docker, Nginx, and GitHub Actions.
+
+For project overview and filtering logic, see [README.md](README.md).
 
 ## Table of Contents
 
-- [Overview](#overview)
-- [Initial Setup](#initial-setup)
+- [Quick Reference](#quick-reference)
 - [Local Development](#local-development)
 - [Docker Deployment](#docker-deployment)
 - [CI/CD Pipeline](#cicd-pipeline)
-- [Security Best Practices](#security-best-practices)
-- [Development Workflow](#development-workflow)
-- [Monitoring & Troubleshooting](#monitoring--troubleshooting)
+- [Security](#security)
+- [Monitoring](#monitoring)
+- [Troubleshooting](#troubleshooting)
 - [Known Issues](#known-issues)
 
 ---
 
-## Overview
+## Quick Reference
 
-This deployment workflow uses:
-- **Docker** for containerization
-- **Docker Compose** for orchestration
-- **GitHub** for version control and CI/CD (GitHub Actions)
-- **Debian Linux** server for hosting
-- **Nginx** as reverse proxy
-- **Let's Encrypt** for SSL certificates
-- **Waitress** as production WSGI server
+**Production Stack**
+- Docker + Docker Compose for containerization
+- Waitress WSGI server (production-ready)
+- SQLite database
+- Nginx reverse proxy
+- Let's Encrypt SSL
+- GitHub Actions for CI/CD
 
-### Architecture
-
+**Deployment Flow**
 ```
-GitHub Push → GitHub Actions → SSH to Server → Docker Rebuild → Container Restart
-Internet → Nginx (HTTPS) → Docker Container (Waitress) → SQLite DB
+Local Dev → Git Push → GitHub Actions → SSH to Server → Docker Rebuild → Live
 ```
 
-### Why Docker?
-
-- **Isolation**: App runs in its own container, no system Python conflicts
-- **Consistency**: Same environment locally and in production
-- **Easy rollback**: Simple to restart or roll back to previous versions
-- **Auto-restart**: Container restarts automatically if it crashes
-- **Clean deployment**: No need for virtual environments or system packages
-- **Easy updates**: Rebuild and restart with one command
-
-### Example Feed
-
-This guide uses the **Gen X Music** feed as a working example:
-- **Feed URL**: https://bsky-feeds.9600baud.net
-- **Bluesky Feed**: https://bsky.app/profile/did:plc:ua3bkfmmdsfeljfevkma3btq/feed/genx-music
-- **Filter**: Posts about Generation X era music (grunge, alternative rock, punk, 90s bands)
-
----
-
-## Initial Setup
-
-### 1. Fork and Clone Repository
-
-```bash
-# Clone the repository
-git clone https://github.com/MarshalX/bluesky-feed-generator.git my-bsky-feed
-cd my-bsky-feed
-
-# Create your own GitHub repository, then:
-git remote set-url origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
-git push -u origin main
-```
-
-### 2. Fix Critical Bug
-
-**IMPORTANT:** There's a bug in `server/data_filter.py` line 91 that prevents post deletion from working.
-
-Edit `server/data_filter.py`:
-
-```python
-# BEFORE (line 91):
-Post.delete().where(Post.uri.in_(post_uris_to_delete))
-
-# AFTER (add .execute()):
-Post.delete().where(Post.uri.in_(post_uris_to_delete)).execute()
-```
-
-Commit this fix:
-```bash
-git add server/data_filter.py
-git commit -m "Fix: Add .execute() to post deletion query"
-git push
-```
+**Example Feed**
+- **URL**: https://bsky-feeds.9600baud.net
+- **Feed**: https://bsky.app/profile/did:plc:ua3bkfmmdsfeljfevkma3btq/feed/genx-music
 
 ---
 
 ## Local Development
 
-### Setup Virtual Environment
+### Setup
 
 ```bash
-# Create and activate virtual environment
+# Clone and setup
+git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git
+cd YOUR_REPO
 python3 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install dependencies
+source .venv/bin/activate
 pip install -r requirements.txt
-```
 
-### Configure Environment
-
-```bash
-# Copy example environment file
+# Configure
 cp .env.example .env
-
-# Edit .env with your settings
-nano .env
+nano .env  # Edit with your settings
 ```
 
-Required environment variables:
+### Environment Variables
+
 ```bash
+# Server
 HOSTNAME=your-domain.com
 SERVICE_DID=did:web:your-domain.com
 FEED_URI=  # Leave empty until first publish
 
-# Bluesky credentials for publishing (create app password first!)
-HANDLE=your-handle.bsky.social  # WITHOUT the @ symbol
-PASSWORD=xxxx-xxxx-xxxx-xxxx     # App password from Bluesky settings
+# Bluesky (create app password at Settings → App Passwords)
+HANDLE=your-handle.bsky.social
+PASSWORD=xxxx-xxxx-xxxx-xxxx  # App password
 
 # Feed metadata
 RECORD_NAME=my-feed
 DISPLAY_NAME=My Custom Feed
-DESCRIPTION=Description of what your feed filters for
+DESCRIPTION=Description of your feed
+AVATAR_PATH=./path/to/avatar.png  # Optional
 
-# Optional settings
+# Options
 IGNORE_ARCHIVED_POSTS=true
 IGNORE_REPLY_POSTS=false
 ```
 
-### Create Bluesky App Password
-
-Before publishing your feed:
-1. Open Bluesky app or web
-2. Go to Settings → Privacy and Security → App Passwords
-3. Click "Add App Password"
-4. Name it "Feed Generator"
-5. Copy the generated password (you can't view it again!)
-6. Add it to your `.env` file
-
-### Run Development Server
+### Development Workflow
 
 ```bash
-# Run with auto-reload
+# Run dev server
 flask --debug run
 
-# The server will start on http://localhost:5000
-```
+# Customize filter
+nano server/data_filter.py
 
-### Customize Your Feed
-
-Edit `server/data_filter.py` to implement your custom feed logic.
-
-**Example: Gen X Music Feed with Context-Aware Filtering**
-
-The Gen X Music feed uses word boundary matching and context awareness to reduce false positives:
-
-```python
-import re
-
-def has_word_match(text: str, words: list[str]) -> bool:
-    """Check if any word appears as a whole word in text."""
-    if not words:
-        return False
-    pattern = r'\b(' + '|'.join(re.escape(word) for word in words) + r')\b'
-    return bool(re.search(pattern, text, re.IGNORECASE))
-
-# High-confidence matches - unambiguous band names
-clear_bands = ['nirvana', 'pearl jam', 'soundgarden', 'radiohead']
-clear_genres = ['grunge', 'shoegaze', 'britpop']
-
-# Ambiguous terms that need music context
-ambiguous_bands = ['blur', 'hole', 'garbage', 'ride']
-ambiguous_genres = ['alternative', 'indie', 'punk']
-
-# Music context words
-music_context = ['music', 'band', 'album', 'song', 'concert', 'spotify']
-
-# Filter logic: clear matches OR (ambiguous matches WITH context)
-has_clear_band = has_word_match(text_lower, clear_bands)
-has_clear_genre = has_word_match(text_lower, clear_genres)
-has_music_context = has_word_match(text_lower, music_context)
-has_ambiguous = has_word_match(text_lower, ambiguous_bands + ambiguous_genres)
-
-is_genx_music = (
-    has_clear_band or
-    has_clear_genre or
-    (has_ambiguous and has_music_context)
-)
-
-if is_genx_music:
-    posts_to_create.append(post_dict)
-```
-
-**Key improvements:**
-- **Word boundaries**: Prevents "blur" from matching "blurry photo"
-- **Context awareness**: Generic terms like "alternative" only match when music context words are present
-- **Clear vs ambiguous**: Separates unambiguous indicators from common words that need validation
-
-### Publish Your Feed
-
-Once configured and tested locally:
-
-```bash
+# Publish feed (first time)
 python publish_feed.py
+# Copy FEED_URI to .env
+
+# Update feed metadata
+python publish_feed.py  # Re-run after changing .env
 ```
-
-This will:
-- Register your feed with Bluesky
-- Give you a FEED_URI to add to `.env`
-- Make your feed discoverable in the app
-
-**Important:** After getting the FEED_URI, add it to `.env` and restart your development server.
 
 ---
 
 ## Docker Deployment
 
-For comprehensive Docker deployment instructions, see **[SERVER-SETUP.md](SERVER-SETUP.md)**.
+### Configuration Files
 
-### Quick Start
-
-#### 1. Create Docker Configuration Files
-
-**Dockerfile:**
+**Dockerfile**
 ```dockerfile
 FROM python:3.11-slim
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install --no-cache-dir waitress
+RUN pip install --no-cache-dir -r requirements.txt waitress
 COPY . .
 EXPOSE 8080
 CMD ["waitress-serve", "--listen=0.0.0.0:8080", "server.app:app"]
 ```
 
-**docker-compose.yml:**
+**docker-compose.yml**
 ```yaml
 services:
   feedgen:
@@ -258,7 +132,7 @@ networks:
     driver: bridge
 ```
 
-**.dockerignore:**
+**.dockerignore**
 ```
 .env
 *.db
@@ -268,47 +142,32 @@ __pycache__
 *.pyc
 ```
 
-#### 2. Server Prerequisites
+### Server Setup
 
-On your Debian server:
 ```bash
-# Install Docker if not already installed
+# Install Docker
 curl -fsSL https://get.docker.com -o get-docker.sh
 sudo sh get-docker.sh
-
-# Install Docker Compose
-sudo apt update
 sudo apt install docker-compose-plugin
 
-# Add user to docker group (optional)
-sudo usermod -aG docker $USER
-```
-
-#### 3. Deploy to Server
-
-```bash
-# Clone repository
+# Deploy
 git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git
 cd YOUR_REPO
+nano .env  # Add production config
 
-# Create .env file (DO NOT commit to git!)
-nano .env
-# Add your production configuration
-
-# Create empty database file
+# Initialize database
 touch feed_database.db
 chmod 666 feed_database.db
 
-# Build and start container
+# Start
 docker-compose up -d --build
-
-# View logs
 docker-compose logs -f
 ```
 
-#### 4. Configure Nginx
+### Nginx Configuration
 
-Create `/etc/nginx/sites-available/feedgen`:
+`/etc/nginx/sites-available/feedgen`:
+
 ```nginx
 server {
     listen 80;
@@ -324,58 +183,45 @@ server {
 }
 ```
 
-Enable and restart:
 ```bash
 sudo ln -s /etc/nginx/sites-available/feedgen /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl restart nginx
 ```
 
-#### 5. Setup SSL Certificate
+### SSL Certificate
 
 ```bash
 sudo apt install certbot python3-certbot-nginx
 sudo certbot --nginx -d your-domain.com
-sudo certbot renew --dry-run  # Test auto-renewal
+sudo certbot renew --dry-run
 ```
 
 ---
 
 ## CI/CD Pipeline
 
-### 1. Generate SSH Key for Deployment
-
-On your local machine:
+### 1. SSH Key Setup
 
 ```bash
-# Generate dedicated deployment key
+# Generate deployment key
 ssh-keygen -t ed25519 -C "github-actions-deploy" -f ~/.ssh/github_deploy
-
-# Copy public key to server
 ssh-copy-id -i ~/.ssh/github_deploy.pub user@your-server-ip
-
-# Test connection
-ssh -i ~/.ssh/github_deploy user@your-server-ip
+ssh -i ~/.ssh/github_deploy user@your-server-ip  # Test
 ```
 
-### 2. Configure GitHub Secrets
+### 2. GitHub Secrets
 
-Go to your GitHub repository → Settings → Secrets and variables → Actions
+Repository → Settings → Secrets and variables → Actions
 
-Add these secrets:
-- **`SERVER_HOST`**: Your server IP address or domain
-- **`SERVER_USER`**: Your deployment username
-- **`SSH_PRIVATE_KEY`**: Contents of `~/.ssh/github_deploy` (the private key)
+Add:
+- `SERVER_HOST` - Server IP/domain
+- `SERVER_USER` - Deployment username
+- `SSH_PRIVATE_KEY` - Contents of `~/.ssh/github_deploy`
 
-To get the private key:
-```bash
-cat ~/.ssh/github_deploy
-# Copy entire output including BEGIN and END lines
-```
+### 3. GitHub Actions Workflow
 
-### 3. Create GitHub Actions Workflow
-
-Create `.github/workflows/deploy.yml`:
+`.github/workflows/deploy.yml`:
 
 ```yaml
 name: Deploy to Production
@@ -388,7 +234,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: production  # Requires manual approval
+    environment: production
 
     steps:
       - name: Deploy via SSH
@@ -405,73 +251,51 @@ jobs:
             docker-compose logs --tail=50
 ```
 
-### 4. Configure Environment Protection
+### 4. Environment Protection
 
-**Important:** Protect your production environment from unauthorized deployments:
+GitHub Repository → Settings → Environments → New environment
 
-1. Go to: **GitHub Repository → Settings → Environments → New environment**
-2. Name it `production`
-3. Add protection rules:
-   - Check "Required reviewers"
-   - Add yourself as a reviewer
-4. Save protection rules
+- Name: `production`
+- Enable "Required reviewers"
+- Add yourself as reviewer
 
-This ensures you must manually approve each deployment, even on public repos.
-
-### 5. Configure Branch Protection (Optional)
-
-Go to: **GitHub Repository → Settings → Branches → Add rule**
-
-For branch `main`:
-- Require pull request reviews before merging
-- Require status checks to pass
-- Restrict who can push to branch
+This requires manual approval for deployments.
 
 ---
 
-## Security Best Practices
+## Security
 
-### Firewall Configuration
+### Firewall
 
 ```bash
-# Enable UFW firewall
-sudo ufw allow 22/tcp   # SSH
-sudo ufw allow 80/tcp   # HTTP
-sudo ufw allow 443/tcp  # HTTPS
+sudo ufw allow 22/tcp    # SSH
+sudo ufw allow 80/tcp    # HTTP
+sudo ufw allow 443/tcp   # HTTPS
 sudo ufw enable
-
-# Check status
-sudo ufw status
 ```
 
 ### SSH Hardening
 
-Edit SSH configuration:
+Edit `/etc/ssh/sshd_config`:
 
-```bash
-sudo nano /etc/ssh/sshd_config
-```
-
-Recommended settings:
 ```
 PermitRootLogin no
 PasswordAuthentication no
 PubkeyAuthentication yes
 ```
 
-Restart SSH:
 ```bash
 sudo systemctl restart sshd
 ```
 
 ### Git Security
 
-**NEVER commit these files:**
-- `.env` - Contains sensitive credentials
-- `*.db` - Database files
+Never commit:
+- `.env` - Credentials
+- `*.db` - Database
 - `.venv/` - Virtual environment
 
-Ensure `.gitignore` contains:
+Ensure `.gitignore`:
 ```
 .env
 *.db
@@ -480,72 +304,56 @@ __pycache__/
 *.pyc
 ```
 
-### Environment Variables
-
-- Store all secrets in `.env` on the server only
-- Never commit `.env` to version control
-- Use GitHub Secrets for deployment credentials
-- Rotate SSH keys periodically
-
-### Protecting Public Repositories
-
-Multi-layered protection:
-1. **GitHub Actions triggers only on push to main** - PRs don't trigger deployments
-2. **Environment protection with manual approval** - Even main branch pushes require your approval
-3. **Branch protection rules** - Prevent unauthorized merges to main
-4. **SSH key isolation** - Deployment key stored only in GitHub Secrets
-5. **You control merges** - Review all PRs before merging
-
 ---
 
-## Development Workflow
+## Monitoring
 
-### Daily Development Cycle
+### Logs
 
 ```bash
-# 1. Create feature branch
-git checkout -b feature/improve-filter
+# Real-time
+docker-compose logs -f
 
-# 2. Make changes to feed logic
-nano server/data_filter.py
+# Recent
+docker-compose logs --tail=100
 
-# 3. Test locally
-source .venv/bin/activate
-flask --debug run
-
-# 4. Commit changes
-git add .
-git commit -m "Improve: Refine music filter keywords"
-
-# 5. Push to GitHub
-git push origin feature/improve-filter
-
-# 6. Create Pull Request on GitHub
-# Review changes, then merge to main
-
-# 7. Approve deployment in GitHub Actions
-# GitHub Actions will automatically deploy via Docker rebuild
+# Since time
+docker-compose logs --since 1h
 ```
 
-### Updating Feed Metadata
-
-To update your feed's name, description, or avatar:
+### Container Management
 
 ```bash
-# Edit .env with new values
-nano .env
+# Status
+docker-compose ps
+docker stats bsky-feedgen
 
-# Re-run publish script
-python publish_feed.py
+# Restart
+docker-compose restart
+
+# Rebuild
+docker-compose down
+docker-compose up -d --build
 ```
 
-### Database Management
+### Test Endpoints
 
 ```bash
-# On server: backup database
+curl https://your-domain.com/.well-known/did.json
+curl https://your-domain.com/xrpc/app.bsky.feed.describeFeedGenerator
+curl "https://your-domain.com/xrpc/app.bsky.feed.getFeedSkeleton?feed=YOUR_FEED_URI&limit=10"
+```
+
+### Database
+
+```bash
+# Backup
 cp feed_database.db feed_database.db.backup-$(date +%Y%m%d)
 
-# Reset database (WARNING: deletes all data)
+# Size
+du -h feed_database.db
+
+# Reset (WARNING: deletes all posts)
 docker-compose down
 rm feed_database.db
 touch feed_database.db
@@ -555,141 +363,54 @@ docker-compose up -d
 
 ---
 
-## Monitoring & Troubleshooting
+## Troubleshooting
 
-### View Logs
-
-```bash
-# Real-time logs
-docker-compose logs -f
-
-# Recent logs
-docker-compose logs --tail=100
-
-# Logs from specific service
-docker-compose logs -f feedgen
-
-# Logs since specific time
-docker-compose logs --since 1h
-```
-
-### Check Container Status
+### Container Won't Start
 
 ```bash
-# Container status
-docker ps
-
-# Container details
-docker-compose ps
-
-# Resource usage
-docker stats bsky-feedgen
-
-# Restart container
-docker-compose restart
-
-# Stop and remove container
-docker-compose down
-
-# Rebuild and restart
-docker-compose up -d --build
-```
-
-### Test Endpoints
-
-```bash
-# Test DID endpoint
-curl https://your-domain.com/.well-known/did.json
-
-# Test feed generator description
-curl https://your-domain.com/xrpc/app.bsky.feed.describeFeedGenerator
-
-# Test feed skeleton (replace with your feed URI)
-curl "https://your-domain.com/xrpc/app.bsky.feed.getFeedSkeleton?feed=YOUR_FEED_URI&limit=10"
-```
-
-### Common Issues
-
-**Container won't start:**
-```bash
-# Check logs for errors
 docker-compose logs --tail=50
-
-# Check if port is already in use
 sudo netstat -tlnp | grep 8080
-
-# Rebuild container from scratch
 docker-compose down
 docker-compose build --no-cache
 docker-compose up -d
 ```
 
-**Database permission errors:**
+### Database Permissions
+
 ```bash
-# Create database file before starting container
 touch feed_database.db
 chmod 666 feed_database.db
 docker-compose up -d
 ```
 
-**Environment variables not loading:**
-```bash
-# Verify .env file exists in same directory as docker-compose.yml
-ls -la .env
+### Environment Variables
 
-# Check variables are loaded in container
+```bash
+ls -la .env
 docker exec bsky-feedgen env | grep HOSTNAME
 ```
 
-**Feed showing old/wrong posts:**
+### Wrong Posts in Feed
+
 ```bash
-# Server may be running old container image
-# Pull latest code and rebuild
 git pull origin main
 docker-compose down
 docker-compose up -d --build
-
-# Check if new code is deployed
-docker exec bsky-feedgen cat server/data_filter.py | grep "your-keyword"
+docker exec bsky-feedgen cat server/data_filter.py | head -20
 ```
 
-**Firehose connection issues:**
+### SSL Issues
+
 ```bash
-# Check network connectivity
-ping bsky.network
-
-# Check container logs for connection errors
-docker-compose logs | grep -i error
-
-# Restart container
-docker-compose restart
-```
-
-**SSL certificate issues:**
-```bash
-# Renew certificate manually
 sudo certbot renew
-
-# Check certificate expiry
 sudo certbot certificates
-
-# Force renewal
-sudo certbot renew --force-renewal
 ```
 
-### Performance Monitoring
+### Performance
 
 ```bash
-# Check resource usage
 docker stats
-
-# Monitor database size
-du -h feed_database.db
-
-# Check disk space
 df -h
-
-# Clean up unused Docker resources
 docker system prune -a
 ```
 
@@ -699,92 +420,42 @@ docker system prune -a
 
 ### 1. Post Deletion Bug (FIXED)
 
-**Issue:** Posts are not removed from the database when deleted from Bluesky.
+**Location:** `server/data_filter.py` line ~180
 
-**Location:** `server/data_filter.py:91`
-
-**Fix:** Add `.execute()` to the delete query:
+**Fix:**
 ```python
+# Add .execute()
 Post.delete().where(Post.uri.in_(post_uris_to_delete)).execute()
 ```
 
-### 2. Filter Accuracy Problem (FIXED)
+### 2. Deprecated datetime.utcnow
 
-**Issue:** Generic keywords can match posts that aren't about your intended topic.
+**Location:** `database.py` line ~18
 
-**Example:** For the Gen X Music feed, words like "alternative", "punk", "indie", "blur", "hole", "garbage" are common English words that appear in non-music contexts.
-
-**Impact:** Feed captures false positives - posts that match keywords but aren't relevant.
-
-**Solution (Implemented):** The current filter uses word boundary matching and context awareness:
+**Fix:**
 ```python
-import re
-
-def has_word_match(text: str, words: list[str]) -> bool:
-    """Check if any word appears as a whole word in text."""
-    pattern = r'\b(' + '|'.join(re.escape(word) for word in words) + r')\b'
-    return bool(re.search(pattern, text, re.IGNORECASE))
-
-# Separate clear indicators from ambiguous terms
-clear_bands = ['nirvana', 'pearl jam', 'radiohead']
-ambiguous_bands = ['blur', 'hole', 'garbage']
-music_context = ['music', 'band', 'album', 'song']
-
-# Require context for ambiguous matches
-has_clear = has_word_match(text, clear_bands)
-has_ambiguous = has_word_match(text, ambiguous_bands)
-has_context = has_word_match(text, music_context)
-
-is_match = has_clear or (has_ambiguous and has_context)
-```
-
-**Testing:** Always test your filter locally with `flask --debug run` and monitor the captured posts before deploying to production.
-
-### 3. Deprecated datetime.utcnow
-
-**Issue:** `database.py:18` uses deprecated `datetime.utcnow`
-
-**Impact:** Low - will work but shows deprecation warning in Python 3.12+
-
-**Recommended fix:**
-```python
-# Replace
-indexed_at = peewee.DateTimeField(default=datetime.utcnow)
-
-# With
 from datetime import datetime, timezone
 indexed_at = peewee.DateTimeField(default=lambda: datetime.now(timezone.utc))
 ```
 
-### 4. Thread Safety
+### 3. False Positive Matches
 
-**Issue:** Database operations happen in firehose callback thread
+**Issue:** Common words matching unintended posts
 
-**Impact:** Medium - potential race conditions under high load
+**Solution:** Use context-aware filtering with word boundaries
 
-**Mitigation:** Current implementation uses `db.atomic()` which helps, but for high-traffic feeds, consider using a message queue.
-
----
-
-## Additional Resources
-
-- [SERVER-SETUP.md](SERVER-SETUP.md) - Comprehensive Docker deployment guide
-- [AT Protocol Documentation](https://atproto.com/)
-- [Bluesky API Docs](https://docs.bsky.app/)
-- [Python atproto SDK](https://github.com/MarshalX/atproto)
-- [Feed Generator Overview](https://github.com/bluesky-social/feed-generator#overview)
-- [Docker Documentation](https://docs.docker.com/)
-- [Docker Compose Documentation](https://docs.docker.com/compose/)
+See README.md for filtering patterns and `server/data_filter.py` for implementation.
 
 ---
 
-## Support & Contributing
+## Resources
 
-- Report issues on GitHub
-- Submit pull requests for improvements
-- Update this documentation as you learn more
+- [README.md](README.md) - Project overview and filter design
+- [AT Protocol Docs](https://atproto.com/)
+- [Bluesky API](https://docs.bsky.app/)
+- [atproto SDK](https://github.com/MarshalX/atproto)
+- [Docker Docs](https://docs.docker.com/)
 
 ---
 
-**Last Updated:** 2025-12-19
-**License:** MIT
+**Last Updated:** 2025-12-20

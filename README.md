@@ -1,70 +1,202 @@
-# ATProto Feed Generator powered by [The AT Protocol SDK for Python](https://github.com/MarshalX/atproto)
+# Generation X Music Feed for Bluesky
 
-> Feed Generators are services that provide custom algorithms to users through the AT Protocol.
+An example implementation ofa a custom Bluesky feed generator that surfaces posts about Generation X era music - grunge, alternative rock, shoegaze, britpop, and 90s music culture.
 
-Official overview (read it first): https://github.com/bluesky-social/feed-generator#overview
+**Live Feed:** [Generation X Music on Bluesky](https://bsky.app/profile/did:plc:ua3bkfmmdsfeljfevkma3btq/feed/genx-music)
 
-## Getting Started
+**Feed URL:** https://bsky-feeds.9600baud.net
 
-We've set up this simple server with SQLite to store and query data. Feel free to switch this out for whichever database you prefer.
+## What Gets Included
 
-Next, you will need to do two things:
+This feed uses simple regular expressions and and filtering logic to build a feed. This still leads to a lot of false positives and would need work for a more accurate content feed. 
 
-1. Implement filtering logic in `server/data_filter.py`.
-2. Copy `.env.example` to `.env`
-3. Optionally implement custom feed generation logic in `server/algos`.
+### Band & Artist Matches
+- **Clear matches**: Nirvana, Pearl Jam, Soundgarden, Radiohead, Smashing Pumpkins, Pixies, Sonic Youth, and 60+ other bands
+- **Ambiguous matches**: Bands with common English names (Blur, Hole, Garbage, Ride, No Doubt) only match when paired with music context words
 
-We've taken care of setting this server up with a did:web. However, you're free to switch this out for did:plc if you like - you may want to if you expect this Feed Generator to be long-standing and possibly migrating domains.
+### Genre & Era Terms
+- **Genres**: Grunge, shoegaze, britpop, trip-hop, post-punk, college rock, lo-fi
+- **Era terms**: "90s music", "90s rock", "generation x music", "nineties alternative"
 
-## Publishing your feed
+### Smart Features
 
-To publish your feed, simply run `python publish_feed.py`.
+**Acronym Expansion** - Automatically expands common band acronyms:
+- NIN → Nine Inch Nails
+- STP → Stone Temple Pilots
+- RHCP → Red Hot Chili Peppers
+- RATM → Rage Against the Machine
+- AIC → Alice in Chains
 
-To update your feed's display data (name, avatar, description, etc.), just update the relevant variables in `.env` and re-run the script.
+**Context-Aware Filtering** - Generic words like "alternative", "punk", "blur", or "no doubt" only match when music context is present (words like "music", "band", "album", "song", "concert", etc.)
 
-After successfully running the script, you should be able to see your feed from within the app, as well as share it by embedding a link in a post (similar to a quote post).
+**Word Boundary Matching** - Prevents false matches (e.g., "blur" won't match "blurry photo")
 
-## Running the Server
+**Content Exclusions** - Filters out political content and off-topic posts
 
-Install Python 3.7+.
+## Filter Logic
 
-Run `setupvenv.sh` to setup a virtual environment and install the dependencies:
+The filtering algorithm works in stages:
 
-```shell
-./setupvenv.sh
+1. **Synonym expansion** - Expands acronyms to full band names
+2. **Political filter** - Excludes posts containing political keywords 
+3. **Music detection** - Checks for:
+   - Clear band/genre matches (high confidence)
+   - Ambiguous matches + music context (validated matches)
+   - Era-specific terms (90s music, etc.)
+
+Posts must match at least one criterion to be included in the feed.
+
+## Technical Details
+
+Built with:
+- [AT Protocol SDK for Python](https://github.com/MarshalX/atproto)
+- Python 3.11+
+- SQLite database
+- Docker for deployment
+- Waitress WSGI server
+
+Based on the [atproto Feed Generator](https://github.com/MarshalX/bluesky-feed-generator) template.
+
+## Customizing for Your Own Feed
+
+Want to create your own topic-based feed? This codebase is a great starting point.
+
+### Quick Start
+
+1. **Clone and setup**
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git
+   cd YOUR_REPO
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+
+2. **Configure your feed**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your credentials and feed details
+   ```
+
+3. **Customize the filter**
+
+   Edit `server/data_filter.py` to implement your filtering logic. The current implementation provides:
+   - `has_word_match()` - Word boundary matching helper
+   - Synonym/acronym expansion
+   - Context-aware filtering
+   - Content exclusions
+
+4. **Test locally**
+   ```bash
+   flask --debug run
+   # Server runs on http://localhost:5000
+   ```
+
+5. **Publish your feed**
+   ```bash
+   python publish_feed.py
+   # Copy the FEED_URI to your .env file
+   ```
+
+### Filter Customization Tips
+
+- **Clear vs Ambiguous**: Separate unique terms from common English words
+- **Context validation**: Require topic-specific context for ambiguous terms
+- **Synonym maps**: Expand abbreviations and acronyms before matching
+- **Exclusion lists**: Filter out off-topic content early
+- **Word boundaries**: Use regex `\b` patterns to prevent substring matches
+
+See `server/data_filter.py` for the complete implementation example.
+
+## Deployment
+
+For production deployment with Docker, Nginx, SSL, and CI/CD:
+
+See **[INSTALL.md](INSTALL.md)** for comprehensive installation documentation including:
+- Docker containerization
+- GitHub Actions CI/CD
+- Server setup and security
+- Monitoring and troubleshooting
+- Database management
+
+## Architecture
+
+```
+Bluesky Firehose → Filter Logic → SQLite DB → Feed API → Bluesky App
+                     ↓
+              - Synonym expansion
+              - Content exclusions
+              - Context validation
+              - Word boundary matching
 ```
 
-**Note**: To get value for `FEED_URI` you need to publish the feed first
+## Development
 
-To run a development Flask server:
+### Project Structure
 
-```shell
-flask run
+```
+├── server/
+│   ├── data_filter.py      # Feed filtering logic
+│   ├── algos/              # Feed generation algorithms
+│   ├── database.py         # Database models
+│   └── app.py             # Flask application
+├── publish_feed.py         # Feed publishing script
+├── .env                    # Configuration (not in git)
+├── INSTALL.md             # Installation guide
+├── CLAUDE.md              # Deployment documentation
+└── README.md              # This file
 ```
 
-**Warning** The Flask development server is not designed for production use. In production, you should use production WSGI server such as [`waitress`](https://flask.palletsprojects.com/en/stable/deploying/waitress/) behind a reverse proxy such as NGINX instead.
+### Running Tests
 
-```shell
-pip install waitress
-waitress-serve --listen=127.0.0.1:8080 server.app:app
-```
-
-To run a development server with debugging:
-
-```shell
+```bash
+# Run development server with debugging
 flask --debug run
+
+# Monitor logs
+docker-compose logs -f
+
+# Test endpoints
+curl http://localhost:5000/.well-known/did.json
 ```
 
-**Note**: Duplication of data stream instances in debug mode is fine.
+### Database Management
 
-**Warning**: If you want to run server in many workers, you should run Data Stream (Firehose) separately.
+```bash
+# Backup database
+cp feed_database.db feed_database.db.backup-$(date +%Y%m%d)
 
-### Endpoints
+# Reset database (clears all posts)
+rm feed_database.db
+touch feed_database.db
+chmod 666 feed_database.db
+```
 
-- `/.well-known/did.json`
-- `/xrpc/app.bsky.feed.describeFeedGenerator`
-- `/xrpc/app.bsky.feed.getFeedSkeleton`
+## Known Issues
+
+See INSTALL.md for detailed issue tracking and solutions.
+
+## Contributing
+
+This is a personal feed generator project, but feel free to:
+- Fork it for your own topic-based feed
+- Report issues or bugs
+- Submit pull requests with improvements
 
 ## License
 
 MIT
+
+## Credits
+
+- Built with [AT Protocol SDK for Python](https://github.com/MarshalX/atproto)
+- Based on [bluesky-feed-generator](https://github.com/MarshalX/bluesky-feed-generator) template
+- Deployed at [bsky-feeds.9600baud.net](https://bsky-feeds.9600baud.net)
+
+## Support
+
+For technical questions about:
+- Installation: See [INSTALL.md](INSTALL.md)
+- Deployment: See [CLAUDE.md](CLAUDE.md)
+- AT Protocol: See [AT Protocol Documentation](https://atproto.com/)
+- Feed Generators: See [Bluesky Feed Generator Docs](https://github.com/bluesky-social/feed-generator)
