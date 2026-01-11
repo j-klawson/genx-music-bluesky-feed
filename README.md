@@ -1,6 +1,8 @@
 # Generation X Music Feed for Bluesky
 
-An example implementation ofa a custom Bluesky feed generator that surfaces posts about Generation X era music - grunge, alternative rock, shoegaze, britpop, and 90s music culture.
+A standalone example implementation of a custom Bluesky feed generator that surfaces posts about Generation X era music - grunge, alternative rock, shoegaze, britpop, and 90s music culture.
+
+This project was originally forked from [MarshalX/bluesky-feed-generator](https://github.com/MarshalX/bluesky-feed-generator) and has been modified to serve as a working example of a topic-based feed with custom filtering logic.
 
 **Live Feed:** [Generation X Music on Bluesky](https://bsky.app/profile/did:plc:ua3bkfmmdsfeljfevkma3btq/feed/genx-music)
 
@@ -54,8 +56,6 @@ Built with:
 - SQLite database
 - Docker for deployment
 - Waitress WSGI server
-
-Based on the [atproto Feed Generator](https://github.com/MarshalX/bluesky-feed-generator) template.
 
 ## Customizing for Your Own Feed
 
@@ -189,8 +189,8 @@ MIT
 
 ## Credits
 
+- Originally forked from [MarshalX/bluesky-feed-generator](https://github.com/MarshalX/bluesky-feed-generator) by [MarshalX](https://github.com/MarshalX)
 - Built with [AT Protocol SDK for Python](https://github.com/MarshalX/atproto)
-- Based on [bluesky-feed-generator](https://github.com/MarshalX/bluesky-feed-generator) template
 - Deployed at [bsky-feeds.9600baud.net](https://bsky-feeds.9600baud.net)
 
 ## Support
